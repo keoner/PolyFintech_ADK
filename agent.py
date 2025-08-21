@@ -9,6 +9,8 @@ import pandas as pd
 from dotenv import load_dotenv
 import os
 
+import datetime as dt
+
 load_dotenv()
 
 GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
@@ -35,6 +37,32 @@ def get_stock_data_10y(ticker: str):
     data = yf.download(ticker, period="10y", interval="1mo")
     return data.to_string()
 
+def get_technical_indicators(ticker_symbol: str):
+    data = yf.download(ticker_symbol, period="1y", interval="1d")
+    
+    # Moving Averages
+    data['MA50'] = data['Close'].rolling(50).mean()
+    data['MA200'] = data['Close'].rolling(200).mean()
+    
+    # Relative Strength Index (RSI)
+    delta = data['Close'].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.rolling(14).mean()
+    avg_loss = loss.rolling(14).mean()
+    rs = avg_gain / avg_loss
+    data['RSI'] = 100 - (100 / (1 + rs))
+    
+    # MACD
+    ema12 = data['Close'].ewm(span=12, adjust=False).mean()
+    ema26 = data['Close'].ewm(span=26, adjust=False).mean()
+    data['MACD'] = ema12 - ema26
+    data['Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
+    
+    # Keep only the last 5 rows to summarize recent trend
+    summary = data[['Close', 'MA50', 'MA200', 'RSI', 'MACD', 'Signal']].tail(5)
+    
+    return summary.to_string()
 
 def get_stock_metrics(ticker_symbol: str):
     ticker = yf.Ticker(ticker_symbol)
@@ -47,7 +75,7 @@ def get_stock_metrics(ticker_symbol: str):
         "Dividend Yield": info.get("dividendYield"),
         "Beta": info.get("beta"),
         "Earnings Growth (Quarterly)": info.get("earningsQuarterlyGrowth"),
-        "Recommendation": info.get("recommendationKey")  # buy/hold/sell
+        "Recommendation": info.get("recommendationKey")
     }
     return str(metrics)
 
@@ -75,6 +103,12 @@ yfinance_metrics_tool = Tool(
     description="Fetch key financial metrics and analyst recommendation for a given ticker symbol, useful for stock evaluation."
 )
 
+technical_tool = Tool(
+    name="Technical Indicators",
+    func=get_technical_indicators,
+    description="Fetch recent stock prices with technical indicators (MA50, MA200, RSI, MACD)"
+)
+
 # 3. LLM
 llm = ChatVertexAI(model_name="gemini-2.5-flash", temperature=0)
 
@@ -87,33 +121,58 @@ agent = initialize_agent(
     llm=llm,
     agent="zero-shot-react-description",
     verbose=True,
+    temperature=0,
+    max_iterations=5,
     handle_parsing_errors=True,
 )
 
 Industry = "Artificial Intelligence"
 investment_horizon = "short"
+date = dt.datetime.now().strftime("%Y-%m-%d")
 
-result = agent.run(f"""
-You are a financial research assistant. I will give you one industry and an investment horizon.
-Your task is to help a user choose a single stock to invest in, based on the following steps:
+from langchain.callbacks import StdOutCallbackHandler
+callback = StdOutCallbackHandler()
 
-1. Search for the top publicly traded companies in the given industry using Google.
-2. Gather relevant news, analyst forecasts, market sentiment, and company strategies that might affect their stock performance.
-3. Compare at least 2-3 stocks using both the Google information and historical stock data from yfinance.
-   - Use monthly data for the past year to understand trends.
-   - Consider volatility, recent performance, and growth potential.
-4. Evaluate the stocks based on the user's investment horizon ({investment_horizon} term).
-   - Short-term: focus on recent momentum and near-term catalysts.
-   - Medium-term: balance growth and stability.
-   - Long-term: focus on fundamentals, market position, and potential for sustained growth.
-5. Pick one stock that is the strongest candidate for this investment horizon and explain clearly why you chose it.
-6. Format your findings using this structure:
-   - Company Name:
-   - Why this company is a good pick:
-   - What the company is doing / strategies:
-   - Management Team quality:
-   - Stock Performance (last 12 months monthly data):
-   - Final Recommendation:
-The industry is: {Industry}.
-""")
-print(result)
+inputs = {"input": f"""
+You are a financial research assistant. Today's date is {date}.
+Your task is to recommend a single stock for investment in the {Industry} industry based on the user's investment horizon ({investment_horizon} term). Use the following steps:
+
+1. Identify 2-3 top publicly traded companies in the industry using Google and other sources.
+2. Gather key information for each company:
+   - Recent news and announcements
+   - Analyst forecasts and ratings
+   - Market sentiment
+   - Company strategies and initiatives
+3. Collect historical stock data from yfinance:
+ - Use monthly data for the past year to assess recent trends.
+ - Evaluate volatility, recent performance, and growth potential.
+ - Compute and analyze technical indicators, including:
+   - Moving averages (MA50, MA200)
+   - Relative Strength Index (RSI)
+   - MACD
+   - Average True Range (ATR)
+4. Compare at least 2-3 stocks from the industry using all gathered data, including fundamentals, news, and technical indicators.
+5. Select the single strongest candidate and provide a clear rationale for your choice.
+
+Format your findings like this:
+- Company Name:
+- Why this company is a good pick:
+- Company strategies and initiatives:
+- Management Team quality:
+- Stock Performance (last 12 months monthly data and technical indicators):
+- Technical Indicators Analysis (MA50 vs MA200, RSI trend, MACD signals, ATR overview):
+- Final Recommendation:
+
+**Provide only the final recommendation and reasoning. No extra steps.**
+"""}
+
+result = agent.invoke(input=inputs, callbacks=[callback], return_intermediate_steps=True)
+
+final_output = result.get("output") or result.get("result") or "No output found."
+
+from rich.console import Console
+from rich.markdown import Markdown
+
+console = Console()
+md = Markdown(final_output)
+console.print(md)
