@@ -23,21 +23,63 @@ search_tool = Tool(
     func=search.run,
 )
 
-def get_stock_data(ticker: str):
-    data = yf.download(ticker, period="1y", interval="1mo")
+def get_stock_data_2y(ticker: str):
+    data = yf.download(ticker, period="2y", interval="1mo")
     return data.to_string()
 
-yfinance_tool = Tool(
-    name="YFinance Stock Data",
-    func=get_stock_data,
-    description="Fetch 1-year stock data for a given ticker symbol."
+def get_stock_data_5y(ticker: str):
+    data = yf.download(ticker, period="5y", interval="1mo")
+    return data.to_string()
+
+def get_stock_data_10y(ticker: str):
+    data = yf.download(ticker, period="10y", interval="1mo")
+    return data.to_string()
+
+
+def get_stock_metrics(ticker_symbol: str):
+    ticker = yf.Ticker(ticker_symbol)
+    info = ticker.info
+    metrics = {
+        "Market Cap": info.get("marketCap"),
+        "P/E Ratio": info.get("trailingPE"),
+        "Forward P/E": info.get("forwardPE"),
+        "Price/Book": info.get("priceToBook"),
+        "Dividend Yield": info.get("dividendYield"),
+        "Beta": info.get("beta"),
+        "Earnings Growth (Quarterly)": info.get("earningsQuarterlyGrowth"),
+        "Recommendation": info.get("recommendationKey")  # buy/hold/sell
+    }
+    return str(metrics)
+
+yfinance_2y_tool = Tool(
+    name="YFinance Short-Term Stock Data",
+    func=get_stock_data_2y,
+    description="Fetch 2-year monthly stock data for short-term investment analysis."
+)
+
+yfinance_5y_tool = Tool(
+    name="YFinance Mid-Term Stock Data",
+    func=get_stock_data_5y,
+    description="Fetch 5-year monthly stock data for medium-term investment analysis."
+)
+
+yfinance_10y_tool = Tool(
+    name="YFinance Long-Term Stock Data",
+    func=get_stock_data_10y,
+    description="Fetch 10-year monthly stock data for long-term investment analysis."
+)
+
+yfinance_metrics_tool = Tool(
+    name="YFinance Fundamental Metrics",
+    func=get_stock_metrics,
+    description="Fetch key financial metrics and analyst recommendation for a given ticker symbol, useful for stock evaluation."
 )
 
 # 3. LLM
 llm = ChatVertexAI(model_name="gemini-2.5-flash", temperature=0)
 
 # 4. Tools list
-tools = [search_tool, yfinance_tool]
+tools = [search_tool, yfinance_2y_tool, yfinance_5y_tool, yfinance_10y_tool, yfinance_metrics_tool]
 
 # 5. Initialize agent
 agent = initialize_agent(
